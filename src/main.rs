@@ -9,21 +9,21 @@ use bevy::sprite::{Wireframe2dConfig, Wireframe2dPlugin};
 const CUBE_ICON_WIDTH: f32 = 50.0;
 const CUBE_ICON_HEIGHT: f32 = 50.0;
 
+const MIN_ICON_Y_VELOCITY: f32 = -100.0;
+const MAX_ICON_Y_VELOCITY: f32 = 100.0;
+const GRAVITY_ACCEL_RATE: f32 = -10.0;
+
 #[derive(Component, Deref, DerefMut)]
 struct Velocity(Vec2);
 
 #[derive(Component)]
 struct Icon;
 
-#[derive(Component)]
-struct JumpTimer {
-    timer: Timer,
-    dir: f32,
-    steps_remaining: i32
-}
-
 #[derive(Event, Default)]
 struct CollisionEvent;
+
+#[derive(Event, Default)]
+struct ClickEvent;
 
 #[derive(Component, Default)]
 struct Collider;
@@ -31,6 +31,9 @@ struct Collider;
 #[derive(Component)]
 #[require(Collider)]
 struct Ground;
+
+#[derive(Component)]
+struct Gravity;
 
 fn main() {
     App::new()
@@ -40,8 +43,10 @@ fn main() {
         ))
         .add_systems(Startup, setup)
         .add_systems(Update, toggle_wireframe)
+        .add_event::<ClickEvent>()
         .add_event::<CollisionEvent>()
         .add_systems(Update, (icon_on_click, cube_jump, collision_check))
+        .add_systems(Update, (apply_gravity, apply_velocity))
         .run();
 }
 
@@ -57,48 +62,52 @@ fn toggle_wireframe(
 
 fn icon_on_click(
     mouse_input: Res<ButtonInput<MouseButton>>,
-    mut commands: Commands,
-    query: Query<(Entity, Option<&JumpTimer>), With<Icon>>
+    mut click_events: EventWriter<ClickEvent>
 ) {
     if mouse_input.just_pressed(MouseButton::Left) {
         println!("LMB clicked");
+        click_events.write_default();
+    }
+}
 
-        if let Ok((icon_entity, jump_timer )) = query.single() {
-            if jump_timer.is_some() {
-                return
-            } else {
-                commands.entity(icon_entity).insert(
-                    JumpTimer {
-                    timer: Timer::from_seconds(0.01, TimerMode::Repeating),
-                    dir: 1.0,
-                    steps_remaining: 12
-                });
-            }
+fn apply_velocity (
+    mut query: Query<(&mut Transform, &mut Velocity, Option<&Icon>)>,
+    time: Res<Time>
+) {
+    for (mut transform, mut velocity, icon) in &mut query {
+        transform.translation.x += velocity.x * time.delta_secs();
+        transform.translation.y += velocity.y * time.delta_secs();
+
+        if icon.is_some() {
+            velocity.y = velocity.y.clamp(MIN_ICON_Y_VELOCITY, MAX_ICON_Y_VELOCITY);
         }
+    }
+}
+
+fn apply_gravity (
+    mut query: Query<(&mut Velocity, &Gravity)>,
+    time: Res<Time>
+) {
+    for (mut velocity, _) in &mut query {
+        velocity.y += GRAVITY_ACCEL_RATE * time.delta_secs();
     }
 }
 
 fn cube_jump(
-    time: Res<Time>,
-    mut query: Query<(Entity, &mut Transform, &mut JumpTimer), With<Icon>>,
-    mut commands: Commands
+    query: Single<(Entity, &mut Velocity), With<Icon>>,
+    mut click_events: EventReader<ClickEvent>,
+    collision_events: EventReader<CollisionEvent>,
 ) {
-    for (entity, mut transform, mut jumptimer) in &mut query {
-        jumptimer.timer.tick(time.delta());
-        if jumptimer.timer.just_finished() {
-            transform.translation.y += 10.0 * jumptimer.dir;
-            jumptimer.steps_remaining -= 1;
+    let (_, mut icon_velocity) = query.into_inner();
+    
+    if !click_events.is_empty() {
+        click_events.clear();
 
-            if jumptimer.steps_remaining == 0 {
-                jumptimer.dir = jumptimer.dir * -1.0;
-                jumptimer.steps_remaining = 12;
-                if jumptimer.dir == 1.0 {
-                    commands.entity(entity).remove::<JumpTimer>();
-                }
-            }
+        if !collision_events.is_empty() {
+            icon_velocity.y = 5.0;
         }
-    }
 }
+    }
 
 fn collision_check (
     icon_query: Single<&Transform, With<Icon>>,
@@ -151,7 +160,8 @@ fn setup(
         MeshMaterial2d(materials.add(Color::hsv(0., 1., 1.))),
         Transform::from_xyz(-400.0, -100.0, 0.0),
         Velocity(Vec2::new(1.0, 0.0)),
-        Icon
+        Icon,
+        Gravity
     ));
 
     let ground = meshes.add(Rectangle::new(10000.0, 500.0));
