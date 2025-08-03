@@ -6,6 +6,9 @@ use bevy::{
 
 use bevy::sprite::{Wireframe2dConfig, Wireframe2dPlugin};
 
+const GROUND_WIDTH: f32 = 10000.0;
+const GROUND_HEIGHT: f32 = 500.0;
+
 const CUBE_ICON_WIDTH: f32 = 50.0;
 const CUBE_ICON_HEIGHT: f32 = 50.0;
 
@@ -13,11 +16,16 @@ const MIN_ICON_Y_VELOCITY: f32 = -100.0;
 const MAX_ICON_Y_VELOCITY: f32 = 100.0;
 const GRAVITY_ACCEL_RATE: f32 = -10.0;
 
-#[derive(Component, Deref, DerefMut)]
+#[derive(Component, Deref, DerefMut, Debug)]
 struct Velocity(Vec2);
 
+#[derive(Component, Debug)]
+struct Size(Vec2);
+
 #[derive(Component)]
-struct Icon;
+struct Icon {
+    size: Size,
+}
 
 #[derive(Event, Default)]
 struct CollisionEvent;
@@ -75,6 +83,7 @@ fn apply_velocity (
     time: Res<Time>
 ) {
     for (mut transform, mut velocity, icon) in &mut query {
+        println!("{:?}", &velocity);
         transform.translation.x += velocity.x * time.delta_secs();
         transform.translation.y += velocity.y * time.delta_secs();
 
@@ -86,10 +95,13 @@ fn apply_velocity (
 
 fn apply_gravity (
     mut query: Query<(&mut Velocity, &Gravity)>,
+    collision_events: EventReader<CollisionEvent>,
     time: Res<Time>
 ) {
-    for (mut velocity, _) in &mut query {
-        velocity.y += GRAVITY_ACCEL_RATE * time.delta_secs();
+    if collision_events.is_empty() {
+        for (mut velocity, _) in &mut query {
+            velocity.y += GRAVITY_ACCEL_RATE * time.delta_secs();
+        }
     }
 }
 
@@ -104,19 +116,22 @@ fn cube_jump(
         click_events.clear();
 
         if !collision_events.is_empty() {
+            println!("Collision events not empty @ cube_jump");
             icon_velocity.y = 5.0;
         }
 }
     }
 
 fn collision_check (
-    icon_query: Single<&Transform, With<Icon>>,
-    collider_query: Query<(Entity, &Transform), With<Collider>>,
+    icon_query: Single<(&Transform, &Size), With<Icon>>,
+    collider_query: Query<(Entity, &Transform, &Size), With<Collider>>,
     mut collision_events: EventWriter<CollisionEvent>
 ) {
-    let icon_transform = icon_query.into_inner();
+    let (icon_transform, icon_size) = icon_query.into_inner();
 
-    for (_collider_entity, collider_transform) in &collider_query {
+    for (_collider_entity, collider_transform, collider_size) in &collider_query {
+        println!("{:?}", icon_transform.translation.truncate());
+        println!("{:?}", icon_transform.scale.truncate());
         let collision = cube_collision(
             Aabb2d::new(
                 icon_transform.translation.truncate(),
@@ -139,14 +154,15 @@ fn cube_collision (
     bounding_box: Aabb2d
 ) -> bool {
 
+    println!("cube {:?}", cube);
+    println!("bounding_box {:?}", bounding_box);
     if !cube.intersects(&bounding_box) {
         return false;
     } else {
         return true;
     }
-
-    
 }
+
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -159,16 +175,20 @@ fn setup(
         Mesh2d(cube),
         MeshMaterial2d(materials.add(Color::hsv(0., 1., 1.))),
         Transform::from_xyz(-400.0, -100.0, 0.0),
-        Velocity(Vec2::new(1.0, 0.0)),
-        Icon,
+        Velocity(Vec2::new(0.0, 0.0)),
+        Icon {
+            size: Size(Vec2::new(CUBE_ICON_WIDTH, CUBE_ICON_HEIGHT))
+        },
         Gravity
     ));
 
-    let ground = meshes.add(Rectangle::new(10000.0, 500.0));
+    let ground = meshes.add(Rectangle::new(GROUND_WIDTH, GROUND_HEIGHT));
     commands.spawn((
         Mesh2d(ground),
         MeshMaterial2d(materials.add(Color::hsv(0.3, 0.4, 0.4))),
         Transform::from_xyz(200.0, -375.0, 0.0),
-        Ground
+        Ground,
+        Size(Vec2::new(GROUND_WIDTH, GROUND_HEIGHT)),
+        Collider
     ));
 }
